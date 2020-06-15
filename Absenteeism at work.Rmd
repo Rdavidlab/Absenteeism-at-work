@@ -1,0 +1,328 @@
+---
+title: "Absenteeism at work"
+author: "Raymond Peter David"
+date: "6/14/2020"
+output: pdf_document
+latex_engine: xelatex
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+tinytex::install_tinytex()
+
+```
+                                       Absenteeism at work
+                                      Raymond Peter David
+\newpage
+# Table of Contents
+
+**1.Executive Summary(Introduction)**
+   
+    1(a). Introduction
+    1(b). Goal of project
+    1(c). Loading the packages
+
+
+
+**2.Methods and Analysis**
+    
+    2(a). Initial data exploration
+    2(b). Preprocessing and data cleaning
+    2(c). Graph
+    2(d). Model description
+    2(e). Model Analysis
+   
+
+
+**3.Results**
+    
+    3(a).Insights and findings
+
+
+
+**4.Conclusion**
+    
+    4(a). Summary of findings
+    4(b). Limitations of model 
+    4(c). Future work 
+
+
+
+**5.Citation**
+    
+    5(a). Citation and credits 
+
+\newpage
+**1(a).Introduction**
+
+Absenteeism is an issue at companies that has a high impact on productivity. It is difficult to run a business if employees are not showing up for work.  Understanding the reasons why an employee has missed a certain amount of hours of work in a certain period is important because then appropriate action can be taken to reduce the amount of hours missed and increase productivity. 
+
+**1(b).Goal of project**
+
+The purpose of this algorithm is to do the following;
+1.	Predict the number of hours missed for an employee based on various factors
+2.	Determine which predictors are the most influential. 
+In order to do this we will use random forest and gradient boosting regression methods. Both methods stem from decision trees which will briefly be discussed before going into the analysis of the two algorithms. Prior to doing that, we will examine the structure of the data and do some preprocessing.
+
+**1(c).Loading the packages**
+
+```{r package,results='hide'}
+#install packages
+if(!require(knitr)) install.packages(knitr) 
+if(!require(tree)) install.packages(tree)
+if(!require(dplyr)) install.packages(dplyr)
+if(!require(stringr)) install.packages(stringr)
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(randomForest)) install.packages(randomForest)
+if(!require(gbm)) install.packages(gbm)
+if(!require(tree)) install.packages(tree)
+if(!require(devtools)) install.packages("devtools")
+if(!require(ggcorrplot)) install.packages(ggcorrplot)
+   
+#load libraries
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(tree)
+library(randomForest)
+library(ggplot2)
+library(gbm)
+library(devtools)
+library(ggcorrplot)
+
+#Get the data from the UCI website to download into R
+temp <- tempfile()
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00445/Absenteeism_at_work_AAA.zip",temp)
+df <- read.csv(unz(temp, "Absenteeism_at_work.csv"))
+```
+**2(a).Initial data exploration**
+
+ABOUT THE DATA
+
+The data contains 21 columns and 741 records. An explanation of all of the records can be found at UCI Machine Learning Website[^1].After loading the data, we see that there needs to be a few steps needed in order to get the data into the right format for our analysis. There are two important issues that need to be resolved;
+1. After loading the data, the column headers are all read in as one character vector so this needs to be addressed. 
+2. The columns in the dataframe are listed as one character vector as well for each row of data, but can be separated by a semicolon.
+
+**2(b). Preprocessing and data cleaning**
+
+Column Headers
+
+To address the first issue we notice that all of the field names start with a capital letter. After separating every value based on where it is capitalized, we see that the length of the vector is 26. We want the length value to be 21 since that is how many variables there. The reason why there are 26 elements is because some fields use multiple capital letters. For example, “Distance from Residence to Work” got split up into three fields since it is capitalized twice. So we have “Distance from” and “Residence to” and “work”.  We use the paste function to concatenate those values. So all 3 of those values get replaced with “Distance from Residence to work”. So we still have 26 elements in the list, but we have the correct fields name this time. Using the “unique” function will get rid of any duplicates headers and we have 21 columns. A similar approach is used for “ID” and “Workload Average day”. So that is how the first issue is addressed above. 
+
+```{r}
+#Create column headers
+col_headers<-names(df)
+col_headers<-gsub('([[:upper:]])', ' \\1', col_headers)
+col_headers<-strsplit(col_headers," ")[[1]]
+col_headers[1:3]<-"ID"
+col_headers[9:11]<-paste(col_headers[9],col_headers[10],col_headers[11],sep = "")
+col_headers[14:15]<-paste(col_headers[14],col_headers[15],sep = "")
+col_headers<-unique(col_headers)
+
+```
+Data Frame
+
+To address the second issue we split the data frame by a “;” using the string split function. This creates a list where each element in the list is a row in the dataframe. From there we use the as.data.frame function to convert it to a dataframe. All qualitative variables are converted to factors and quantitative variables are converted to numeric. all Finally, we rename the column headers using the data in the previous section. 
+
+```{r preprocessing, results='hide'}
+#Rename column headers
+obsv_list<-strsplit(df[,1],";")
+df<-data.frame(t(sapply(obsv_list,c)))
+as.data.frame(obsv_list)
+names(df)<-col_headers
+
+#Convert variables to factors and numeric
+factor_var_col<-c(2:5,12,13,15,16)
+df_factor<-data.frame(lapply(df[factor_var_col],as.factor))
+df_numeric<-data.frame(lapply(df[-factor_var_col],as.numeric))
+final_df<-cbind(df_factor,df_numeric)
+```
+Summary Statistics
+
+Below is a correlation matrix that describes the relationship between all of the quantitative variables. Also, plotted below are histograms of the absenteeism times. 
+
+
+**2(c). Graph**
+
+```{r}
+#Plot histogram of absenteeism
+hist(final_df$Absenteeism.time.in.hours, col="red", xlab="Absenteeism Time In Hours",ylab="Frequency",main="Distribution of Absenteeism")
+
+```
+
+As you can see, the majority of the employees are absent less than ten hours. 
+
+```{r}
+#Plot Correlation Matrix
+corr <- round(cor(df_numeric), 1)
+png(height=1200, width=1500, pointsize=15, file="overlap.png")
+ggcorrplot(corr, hc.order = TRUE, type = "lower",lab = TRUE, lab_size = 2,pch = 2, tl.cex = 7,tl.srt = 90)
+
+```
+We see that there are a few strongly positively correlated and negatively correlated variables in the dataset. It might be wise to use an algorithm that will handle this issue. In the next section we will talk about tree based methods. 
+
+**2(d). Model description**
+Tree Based Methods
+
+Decision trees 
+
+Decision trees can be used in classification and regression problems. They are designed to select certain variables, and split the data based off of a certain value. For example, # of pets is one of the variables in the dataset. So we could split the data into regions. For example we could split the data into regions so that we only look at the number of people who have less than 3 pets, and the other region would be the number of people who have at least 3 pets. Now within each of those regions, we could select another variable, for example “reason of absence”. We could see how many people who have less than 3 pets and so forth. This method can be used to predict what the final outcome would be. Below are some advantages and disadvantages. The biggest disadvantage is that it has poor predictive accuracy. If the number of conditions are too high, the tree tends to overfit or have high bias. 
+Bagging
+To handle the high variance issue, a bootstrapping technique known as bagging can be applied. The idea here is that you subset the data into several subsets within the training set. Randomly subset them at random with replacement. Create M groups. Use each bag to train the model so we have M models. Query them with the same X. Get the output of the model and take the mean and that is the Y value. The idea of averaging these reduces the variance. One of the disadvantages is that it is difficult to interpret. 
+Looking at the column headers we see that for the majority of the fields, they can be seperated anytime a capital letter occurs. The actual names of the variables are listed on the UCI Website
+
+
+The purpose of Random forest is to decorrelate the trees. In this algorithm subset of rows AND columns are sampled from the data and a decision tree is built. Repeat this process several times. The base learner is the decision trees.  Each decision tree will have a high variance.Gradient Boosting and Random forest decorrelate the trees by only selecting a subset of rows and a subset of columns, running the algorithm, an making a prediction. This process is done several times and then all of the values are aggregated together.
+
+**2(e). Model Analysis**
+Analysis 
+
+Now that a brief overview of the tree base models have been given, let’s look at how this can be applied to the Absenteeism dataset. The two models that were selected to use were the Random Forest and Gradient Boosting for this project. From previous explanation, the decision tree was excluded since we know the other two methods are expected to out perform the others. Here are a few things to note when applying the two algorithms. 
+1.	The number of trees is a parameter that is used in both algorithms
+2.	The number of branches (variables) for a given tree is going to be set to the square root of the number of total variables in the dataset which is 4. 
+3.	Cross validation is not needed since this is a bootstrapping technique. The data is already being resampled based on the number of trees
+In order to determine the optimal number of trees and algorithm (selected from the two), we are going iterate over different number of trees and see the following
+1.	Which model has the lowest test MSE
+2.	What is the number of trees that occurs where the MSE is the lowest. 
+3.	Based off of the optimal model we will also examine which variables are the most important. 
+
+
+```{r}
+#Assign training/test split
+set.seed(40, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(40)` instead
+train_percent<-0.8
+train <- sample(1:nrow(final_df),round(nrow(final_df)*train_percent))
+
+
+#Create an empty vector that will contain the MSE for both models
+number_of_trees<-seq(0,5000,100)
+RF.MSE<-c()
+Boost.MSE<-c()
+
+#Run random forest and boost model. The number of trees wil increase by 100 each time and the mse will be calculated for each
+#We can then find where the minimum MSE occurs in which model
+for(i in 2:(length(number_of_trees)-1)){
+  
+  #Run both models using the training data
+  RF.train<-randomForest(Absenteeism.time.in.hours~.,data=final_df[train,],mtry=5, ntree=number_of_trees[i])
+  boost.train<-gbm(Absenteeism.time.in.hours~.,data=final_df[train,],distribution = "gaussian",n.trees =number_of_trees[i], interaction.depth = 4)
+  
+  #Calculate the prediction on both models using the test set
+  RF.predict<-predict(RF.train,newdata =final_df[-train,],n.trees = number_of_trees[i] )
+  Boost.predict<-predict(boost.train,newdata =final_df[-train,],n.trees = number_of_trees[i] )
+  
+  #calculate MSE AND assign it to the MSE vector
+  actual_values<-final_df[-train,21]
+  RF.MSE[i]<-round(mean((RF.predict-actual_values)^2))
+  Boost.MSE[i]<-round(mean((Boost.predict-actual_values)^2))
+}
+```
+Next we plot the Test MSE for both models
+
+```{r echo=FALSE}
+
+ggplot() + geom_line(aes(x=number_of_trees[-1],y=RF.MSE, group =1),color='red') + 
+  geom_line(aes(x=number_of_trees[-1],y=Boost.MSE, group = 2),color='blue') + 
+  ylab('MSE')+xlab('Number of Trees')
+
+```
+It appears that the Random Forest model performed significantly better. Let's determine which model to select by locating the number of trees where the MSE is the smallest. 
+#Results
+**3(a).Insights and findings**
+```{r pressure, echo=FALSE}
+
+#Determine where the minimum MSE occurs in each model
+RF.min.mse.index<-which.min(RF.MSE)
+Boost.min.mse.index<-which.min(Boost.MSE)
+
+#Determine the actual min MSE for each algorithm
+RF.min.mse<-RF.MSE[RF.min.mse.index]
+Boost.min.mse<-Boost.MSE[Boost.min.mse.index]
+
+#Optimal number of trees
+opt.number.of.trees<-number_of_trees[RF.min.mse]
+```
+
+Based off of the results we see that the optimal algorithm is a Random Forest  with 3800 trees which has a MSE of 39.Let's see what the most important variables are for this model.
+
+```{r }
+RF.train.optimal<-randomForest(Absenteeism.time.in.hours~.,data=final_df[train,],mtry=5, ntree=3800)
+imp_variables<-importance(RF.train.optimal)
+importance(RF.train.optimal)
+```
+#Conclusion
+
+**4(a). Summary of findings**
+
+It appears that the most important variables are Reason of absence, Month of absence, Day of the week, and Workload average day.
+
+
+
+**4(b). Limitations of model**
+
+Random forest model is an ensemble learning model that integrates multiple decision trees which makes it more accurate. It is also less robust which makes it a really good model.Also, training dataset with large number of trees can be costly as well.The nature of random forest which favors trees with high correlation means that smaller groups may at times be more favored than larger groups.Variable importance may not be as effective when using categorical variables[^2]
+
+Gradient boosting may overemphasize outliers which may lead to overfitting(when data is noisy).It is also generally harder to tune.Just like random forest, gradient boosting may require hundreds to even thousands of trees making it costly to conduct. It is also less interpretable than other models available.[^3]
+
+Both the random forest model and gradient boosting are very accurate model at the expense of some interpretability.
+
+
+
+**4(c). Future work**
+
+To confirm the insights and relationship mentioned in this report, further research must be done with a larger dataset. Also to find the best prediction with the highest accuracy, we need to strengthen our findings by testing the data with different parameters and also with various models.
+
+
+
+#Citations
+*
+*5(a). Citation and credits **
+
+
+Martiniano, A., Ferreira, R. P., Sassi, R. J., & Affonso, C. (2012). Application of a neuro fuzzy network in prediction of absenteeism at work. In Information Systems and Technologies (CISTI), 7th Iberian Conference on (pp. 1-4). IEEE.
+
+Acknowledgements:
+Professor Gary Johns for contributing to the selection of relevant research attributes.
+Professor Emeritus of Management
+Honorary Concordia University Research Chair in Management
+John Molson School of Business
+Concordia University
+Montreal, Quebec, Canada
+Adjunct Professor, OB/HR Division
+Sauder School of Business,
+University of British Columbia
+Vancouver, British Columbia, Canada
+
+Dua, D. and Graff, C. (2019). UCI Machine Learning Repository [http://archive.ics.uci.edu/ml]. Irvine, CA: University of California, School of Information and Computer Science.
+
+Here is a BiBTeX citation as well:
+
+@misc{Dua:2019 ,
+author = "Dua, Dheeru and Graff, Casey",
+year = "2017",
+title = "{UCI} Machine Learning Repository",
+url = "http://archive.ics.uci.edu/ml",
+institution = "University of California, Irvine, School of Information and Computer Sciences" }
+
+Citations 
+“Gradient Boosting Machines.” Gradient Boosting Machines · UC Business Analytics R Programming Guide, uc-r.github.io/gbm_regression.
+
+Ravanshad, Abolfazl. “Gradient Boosting vs Random Forest.” Medium, Medium, 1 Aug. 2019, medium.com/@aravanshad/gradient-boosting-versus-random-forest-cfa3fa8f0d80.
+
+[^1]:https://archive.ics.uci.edu/ml/datasets/Absenteeism+at+work.
+[^2]:https://medium.com/@aravanshad/gradient-boosting-versus-random-forest-cfa3fa8f0d80
+[^3]:http://uc-r.github.io/gbm_regression
+
+```{r}
+print("Operating System:")
+version
+```
+
+```{r}
+print("All installed packages")
+installed.packages()
+```
+
